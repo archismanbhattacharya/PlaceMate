@@ -1,13 +1,78 @@
-
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { model } from '../aiConfig';
-import { FileText, Briefcase, Sparkles, CheckCircle, AlertTriangle } from 'lucide-react';
+import { FileText, Briefcase, Sparkles, CheckCircle, AlertTriangle, Upload, X } from 'lucide-react';
+import { useDropzone } from 'react-dropzone';
+import * as pdfjsLib from 'pdfjs-dist';
+import mammoth from 'mammoth';
+
+// Set worker source for pdfjs
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 const ResumeScorer = () => {
     const [resumeText, setResumeText] = useState('');
     const [targetRole, setTargetRole] = useState('');
     const [analysisResult, setAnalysisResult] = useState(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
+    const [fileName, setFileName] = useState('');
+    const [fileError, setFileError] = useState('');
+
+    const onDrop = useCallback(async (acceptedFiles) => {
+        const file = acceptedFiles[0];
+        if (!file) return;
+
+        setFileName(file.name);
+        setFileError('');
+        setResumeText('');
+
+        try {
+            if (file.type === 'text/plain') {
+                const text = await file.text();
+                setResumeText(text);
+            } else if (file.type === 'application/pdf') {
+                const arrayBuffer = await file.arrayBuffer();
+                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                let fullText = '';
+
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const textContent = await page.getTextContent();
+                    const pageText = textContent.items.map(item => item.str).join(' ');
+                    fullText += pageText + '\n';
+                }
+                setResumeText(fullText);
+            } else if (
+                file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+                file.name.endsWith('.docx')
+            ) {
+                const arrayBuffer = await file.arrayBuffer();
+                const result = await mammoth.extractRawText({ arrayBuffer });
+                setResumeText(result.value);
+            } else {
+                setFileError('Unsupported file type. Please upload PDF, DOCX, or TXT.');
+                setFileName('');
+            }
+        } catch (error) {
+            console.error('Error reading file:', error);
+            setFileError('Failed to read file. Please try again or paste text manually.');
+            setFileName('');
+        }
+    }, []);
+
+    const { getRootProps, getInputProps, isDragActive } = useDropzone({
+        onDrop,
+        accept: {
+            'text/plain': ['.txt'],
+            'application/pdf': ['.pdf'],
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx']
+        },
+        maxFiles: 1
+    });
+
+    const clearFile = () => {
+        setFileName('');
+        setResumeText('');
+        setFileError('');
+    };
 
     const handleResumeAnalysis = async () => {
         if (!resumeText.trim() || !targetRole.trim()) return;
@@ -83,14 +148,56 @@ const ResumeScorer = () => {
                     <div className="bg-card border border-border rounded-xl p-4 shadow-sm">
                         <label className="block text-sm font-medium mb-3 flex items-center gap-2">
                             <FileText className="w-4 h-4 text-primary" />
-                            Paste Resume Content
+                            Upload Resume
                         </label>
-                        <textarea
-                            className="w-full h-64 bg-secondary/50 rounded-lg p-4 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none transition-all"
-                            placeholder="Paste your full resume text here..."
-                            value={resumeText}
-                            onChange={(e) => setResumeText(e.target.value)}
-                        ></textarea>
+
+                        {!fileName ? (
+                            <div
+                                {...getRootProps()}
+                                className={`border-2 border-dashed rounded-xl h-64 flex flex-col items-center justify-center p-6 text-center cursor-pointer transition-colors ${isDragActive ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50 hover:bg-secondary/50'
+                                    }`}
+                            >
+                                <input {...getInputProps()} />
+                                <Upload className="w-10 h-10 text-muted-foreground mb-4" />
+                                <p className="text-sm font-medium">Click to upload or drag and drop</p>
+                                <p className="text-xs text-muted-foreground mt-1">PDF, DOCX, TXT (Max 5MB)</p>
+                            </div>
+                        ) : (
+                            <div className="h-64 bg-secondary/50 rounded-xl p-6 flex flex-col items-center justify-center relative border border-border">
+                                <button
+                                    onClick={clearFile}
+                                    className="absolute top-2 right-2 p-1 hover:bg-secondary rounded-full text-muted-foreground transition-colors"
+                                >
+                                    <X className="w-4 h-4" />
+                                </button>
+                                <FileText className="w-12 h-12 text-primary mb-3" />
+                                <p className="font-medium text-sm truncate max-w-full px-4">{fileName}</p>
+                                <p className="text-xs text-muted-foreground mt-1">Ready for analysis</p>
+                            </div>
+                        )}
+
+                        {fileError && (
+                            <div className="mt-2 text-red-500 text-xs flex items-center gap-1">
+                                <AlertTriangle className="w-3 h-3" />
+                                {fileError}
+                            </div>
+                        )}
+
+                        {/* Fallback Text Area (Hidden but usable if needed or for debugging) */}
+                        <div className="mt-4">
+                            <details className="text-xs text-muted-foreground">
+                                <summary className="cursor-pointer hover:text-primary">Or paste text manually</summary>
+                                <textarea
+                                    className="w-full h-32 bg-secondary/50 rounded-lg p-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none mt-2"
+                                    placeholder="Paste resume text here..."
+                                    value={resumeText}
+                                    onChange={(e) => {
+                                        setResumeText(e.target.value);
+                                        setFileName('');
+                                    }}
+                                ></textarea>
+                            </details>
+                        </div>
                     </div>
 
                     <button
@@ -149,7 +256,7 @@ const ResumeScorer = () => {
                     ) : (
                         <div className="h-full border-2 border-dashed border-border rounded-xl flex flex-col items-center justify-center p-10 text-muted-foreground bg-secondary/20">
                             <Sparkles className="w-12 h-12 mb-4 opacity-20" />
-                            <p className="text-center">Enter the target role and resume to receive a professional review.</p>
+                            <p className="text-center">Enter the target role and upload/paste resume to receive a professional review.</p>
                         </div>
                     )}
                 </div>
