@@ -59,9 +59,21 @@ const PublicRoute = ({ children }) => {
   return children;
 };
 
+const ThemeInitializer = () => {
+  useEffect(() => {
+    const theme = localStorage.getItem('theme') ||
+      (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    const root = window.document.documentElement;
+    root.classList.remove('light', 'dark');
+    root.classList.add(theme);
+  }, []);
+  return null;
+};
+
 function App() {
   return (
     <BrowserRouter>
+      <ThemeInitializer />
       <Routes>
         <Route path="/login" element={
           <PublicRoute>
